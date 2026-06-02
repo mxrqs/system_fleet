@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1776292136406,
+      "tag": "0000_foamy_krista_starr",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1776292288555,
+      "tag": "0001_adorable_tarantula",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1776294541691,
+      "tag": "0002_pretty_meteorite",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1776300000000,
+      "tag": "0003_oc_estoque_v3",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776761600000,
+      "tag": "0004_checklists",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1776383439578,
+      "tag": "0005_curved_robbie_robertson",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1779674038871,
+      "tag": "0006_easy_silver_surfer",
+      "breakpoints": true
+    }
+  ]
+}
