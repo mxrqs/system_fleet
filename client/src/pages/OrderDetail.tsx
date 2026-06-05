@@ -30,8 +30,8 @@ import {
   ArrowLeft,
   Boxes,
   CheckCircle2,
+  ClipboardList,
   Download,
-  ExternalLink,
   FileText,
   Flag,
   Info,
@@ -41,7 +41,6 @@ import {
   ShieldCheck,
   Trash2,
   X,
-  XCircle,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -58,14 +57,9 @@ const STATUS_COLORS: Record<string, string> = {
   Inativo: "bg-gray-100 text-gray-600 border-gray-200",
   Pendente: "bg-amber-100 text-amber-700 border-amber-200",
   Concluído: "bg-blue-100 text-blue-700 border-blue-200",
-  Aprovada: "bg-emerald-100 text-emerald-700 border-emerald-200",
-  Reprovada: "bg-red-100 text-red-700 border-red-200",
-  Autorizada: "bg-violet-100 text-violet-700 border-violet-200",
-  PendenteAprovacao: "bg-orange-100 text-orange-700 border-orange-200",
 };
 
 const TYPE_COLORS: Record<string, string> = {
-  OC: "bg-purple-100 text-purple-700 border-purple-200",
   OS: "bg-cyan-100 text-cyan-700 border-cyan-200",
 };
 
@@ -204,8 +198,8 @@ function StockConsultModal({
                       </td>
 
                       <td className="px-4 py-3 text-right text-muted-foreground">
-                        {item.unitCost
-                          ? `R$ ${parseFloat(String(item.unitCost)).toFixed(2)}`
+                        {item.lastUnitCost
+                          ? `R$ ${parseFloat(String(item.lastUnitCost)).toFixed(2)}`
                           : "—"}
                       </td>
 
@@ -219,8 +213,8 @@ function StockConsultModal({
                               id: item.id,
                               name: item.name,
                               barcode: item.barcode ?? undefined,
-                              unitCost: item.unitCost
-                                ? parseFloat(String(item.unitCost))
+                              unitCost: item.lastUnitCost
+                                ? parseFloat(String(item.lastUnitCost))
                                 : undefined,
                               unit: item.unit ?? "un",
                             });
@@ -266,8 +260,6 @@ export default function OrderDetailPage() {
   const [showAddItem, setShowAddItem] = useState(false);
   const [showStockConsult, setShowStockConsult] = useState(false);
   const [showAddAlert, setShowAddAlert] = useState(false);
-  const [showRejectDialog, setShowRejectDialog] = useState(false);
-  const [showAuthorizeDialog, setShowAuthorizeDialog] = useState(false);
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
   const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
 
@@ -287,12 +279,6 @@ export default function OrderDetailPage() {
   });
 
   const [alertForm, setAlertForm] = useState({ description: "" });
-  const [rejectReason, setRejectReason] = useState("");
-  const [authorizeForm, setAuthorizeForm] = useState({
-    ocNumber: "",
-    ocPdfUrl: "",
-  });
-  const [pdfFile, setPdfFile] = useState<File | null>(null);
 
   const [materialForm, setMaterialForm] = useState({
     inventoryItemId: "",
@@ -337,35 +323,6 @@ export default function OrderDetailPage() {
           order.creatorId === user?.id),
     }
   );
-
-  const approve = trpc.orders.approve.useMutation({
-    onSuccess: () => {
-      toast.success("OC aprovada com sucesso!");
-      utils.orders.getById.invalidate({ id: orderId });
-    },
-    onError: error => toast.error(error.message),
-  });
-
-  const reject = trpc.orders.reject.useMutation({
-    onSuccess: () => {
-      toast.success("OC reprovada.");
-      utils.orders.getById.invalidate({ id: orderId });
-      setShowRejectDialog(false);
-      setRejectReason("");
-    },
-    onError: error => toast.error(error.message),
-  });
-
-  const authorize = trpc.orders.authorize.useMutation({
-    onSuccess: () => {
-      toast.success("OC autorizada! Número e PDF registrados.");
-      utils.orders.getById.invalidate({ id: orderId });
-      setShowAuthorizeDialog(false);
-      setAuthorizeForm({ ocNumber: "", ocPdfUrl: "" });
-      setPdfFile(null);
-    },
-    onError: error => toast.error(error.message),
-  });
 
   const addItem = trpc.orders.addItem.useMutation({
     onSuccess: () => {
@@ -457,7 +414,7 @@ export default function OrderDetailPage() {
   const deliverMaterialRequestMutation =
     trpc.materialRequests.deliver.useMutation({
       onSuccess: () => {
-        toast.success("Material entregue e item lançado na OS.");
+        toast.success("Material entregue.");
         utils.materialRequests.list.invalidate();
         utils.orders.getById.invalidate({ id: orderId });
         setDeliverTarget(null);
@@ -465,39 +422,6 @@ export default function OrderDetailPage() {
       },
       onError: error => toast.error(error.message),
     });
-
-  const osTotalCost = useMemo(() => {
-    if (!order?.items?.length) return 0;
-
-    return order.items.reduce((acc, item) => {
-      const qty = parseFloat(String(item.quantity)) || 0;
-      const cost = parseFloat(String(item.unitCost ?? 0)) || 0;
-      return acc + qty * cost;
-    }, 0);
-  }, [order?.items]);
-
-  const evidencePhotoUrls = useMemo(() => {
-    if (!order) return [] as string[];
-
-    const raw = (order as any).evidenciaFotos;
-
-    if (!raw) return [] as string[];
-
-    if (Array.isArray(raw)) {
-      return raw.filter(Boolean).map(String);
-    }
-
-    if (typeof raw === "string") {
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed.filter(Boolean).map(String);
-      } catch {
-        return raw ? [raw] : [];
-      }
-    }
-
-    return [] as string[];
-  }, [order]);
 
   function handleSubmitMaterialRequest() {
     if (!materialForm.itemName.trim()) {
@@ -520,40 +444,6 @@ export default function OrderDetailPage() {
       unit: materialForm.unit || undefined,
       unitCost: materialForm.unitCost || undefined,
       notes: materialForm.notes || undefined,
-    });
-  }
-
-  async function handleAuthorize() {
-    if (pdfFile) {
-      try {
-        const base64 = await new Promise<string>((resolve, rejectFn) => {
-          const reader = new FileReader();
-
-          reader.onload = () => {
-            const result = reader.result as string;
-            resolve(result.split(",")[1] ?? result);
-          };
-
-          reader.onerror = rejectFn;
-          reader.readAsDataURL(pdfFile);
-        });
-
-        authorize.mutate({
-          id: orderId,
-          ocNumber: authorizeForm.ocNumber,
-          ocPdfBase64: base64,
-          ocPdfFilename: pdfFile.name,
-        });
-      } catch {
-        toast.error("Erro ao fazer upload do PDF.");
-      }
-
-      return;
-    }
-
-    authorize.mutate({
-      id: orderId,
-      ocNumber: authorizeForm.ocNumber,
     });
   }
 
@@ -608,15 +498,8 @@ export default function OrderDetailPage() {
   );
 
   const isOS = order.type === "OS";
-  const isOC = order.type === "OC";
   const status = order.status as string;
   const isFinalized = status === "Concluído";
-
-  const canApprove = isAdmin && isOC && status === "Pendente";
-  const canReject =
-    isAdmin && isOC && (status === "Pendente" || status === "Aprovada");
-  const canAuthorize = isAdmin && isOC && status === "Aprovada";
-  const isAuthorized = isOC && status === "Autorizada";
 
   const isOrderCreator = order.creatorId === user?.id;
   const isEstoquista = user?.role === "estoquista";
@@ -635,6 +518,12 @@ export default function OrderDetailPage() {
   const canProcessMaterialRequests = isOS && isEstoquista;
 
   const materialRequestRows = materialRequests ?? [];
+
+  const osTotalCost = (order.items ?? []).reduce((acc, item) => {
+    const qty = parseFloat(String(item.quantity));
+    const cost = parseFloat(String(item.unitCost ?? 0));
+    return acc + qty * cost;
+  }, 0);
 
   function getMaterialStatusClass(statusValue: string) {
     if (statusValue === "Entregue")
@@ -833,45 +722,6 @@ export default function OrderDetailPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-              {isOC && isAdmin && (
-                <>
-                  {canApprove && (
-                    <Button
-                      size="sm"
-                      className="gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
-                      onClick={() => approve.mutate({ id: orderId })}
-                      disabled={approve.isPending}
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      {approve.isPending ? "Aprovando..." : "Aprovar"}
-                    </Button>
-                  )}
-
-                  {canReject && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 border-red-300 text-red-100 hover:bg-red-500/20 hover:text-white"
-                      onClick={() => setShowRejectDialog(true)}
-                    >
-                      <XCircle className="h-4 w-4" />
-                      Reprovar
-                    </Button>
-                  )}
-
-                  {canAuthorize && (
-                    <Button
-                      size="sm"
-                      className="gap-1.5 bg-violet-600 text-white hover:bg-violet-700"
-                      onClick={() => setShowAuthorizeDialog(true)}
-                    >
-                      <ShieldCheck className="h-4 w-4" />
-                      Autorizar OC
-                    </Button>
-                  )}
-                </>
-              )}
-
               {isOS && osTotalCost > 0 && (
                 <div className="rounded-xl border border-cyan-300/30 bg-cyan-500/10 px-4 py-2">
                   <p className="text-xs text-cyan-100">Total da OS</p>
@@ -913,35 +763,35 @@ export default function OrderDetailPage() {
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Criador
               </p>
-              <p className="mt-1 font-semibold">{order.creatorName ?? "—"}</p>
+              <p className="mt-1 font-semibold text-slate-900">
+                {order.creatorName ?? "—"}
+              </p>
             </div>
 
             <div className="p-5">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Placa / Matrícula
               </p>
-              <p className="mt-1 font-mono font-semibold">
-                {order.licensePlate ?? (order as any).placaMatricula ?? "—"}
+              <p className="mt-1 font-semibold text-slate-900">
+                {order.licensePlate ?? "—"}
               </p>
             </div>
 
             <div className="p-5">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Criado em
+                Contrato
               </p>
-              <p className="mt-1 font-semibold">
-                {format(new Date(order.createdAt), "dd/MM/yyyy", {
-                  locale: ptBR,
-                })}
+              <p className="mt-1 font-semibold text-slate-900">
+                {(order as any).contrato ?? "—"}
               </p>
             </div>
 
             <div className="p-5">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Atualizado
+                Data de Criação
               </p>
-              <p className="mt-1 font-semibold">
-                {format(new Date(order.updatedAt), "dd/MM/yyyy HH:mm", {
+              <p className="mt-1 font-semibold text-slate-900">
+                {format(new Date(order.createdAt), "dd/MM/yyyy 'às' HH:mm", {
                   locale: ptBR,
                 })}
               </p>
@@ -950,1038 +800,700 @@ export default function OrderDetailPage() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="space-y-6">
-          {/* Wizard fields summary */}
-          {((order as any).contrato ||
-            (order as any).tipoServico ||
-            (order as any).kmHorimetro ||
-            (order as any).informeTecnico) && (
-            <Card className="border shadow-sm">
-              <CardHeader className="pb-2 pt-4">
-                <CardTitle className="text-sm text-muted-foreground font-medium">
-                  Dados da Solicitação
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          {/* Itens da Ordem */}
+          <Card className="border shadow-sm">
+            <CardHeader className="flex flex-row items-center justify-between border-b bg-slate-50/50 py-4">
+              <div className="flex items-center gap-2">
+                <Package className="h-5 w-5 text-primary" />
+                <CardTitle className="text-base font-bold">
+                  Itens e Serviços
                 </CardTitle>
-              </CardHeader>
+              </div>
 
-              <CardContent className="pb-4 grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                {(order as any).contrato && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Contrato</p>
-                    <p className="font-medium">{(order as any).contrato}</p>
-                  </div>
-                )}
-
-                {(order as any).tipoServico && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">
-                      Tipo de Serviço
-                    </p>
-                    <p className="font-medium">{(order as any).tipoServico}</p>
-                  </div>
-                )}
-
-                {(order as any).kmHorimetro && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">
-                      KM / Horímetro
-                    </p>
-                    <p className="font-medium font-mono">
-                      {(order as any).kmHorimetro}
-                    </p>
-                  </div>
-                )}
-
-                {(order as any).informeTecnico && (
-                  <div className="col-span-2 md:col-span-3">
-                    <p className="text-xs text-muted-foreground">
-                      Informe Técnico
-                    </p>
-                    <p className="font-medium whitespace-pre-wrap">
-                      {(order as any).informeTecnico}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* OC Budget fields */}
-          {isOC && (order as any).orcamentoEmpresa && (
-            <Card className="border shadow-sm">
-              <CardHeader className="pb-2 pt-4">
-                <CardTitle className="text-sm text-muted-foreground font-medium">
-                  Dados do Orçamento
-                </CardTitle>
-              </CardHeader>
-
-              <CardContent className="pb-4 grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                {(order as any).orcamentoEmpresa && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Empresa</p>
-                    <p className="font-medium">
-                      {(order as any).orcamentoEmpresa}
-                    </p>
-                  </div>
-                )}
-
-                {(order as any).orcamentoCnpj && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">CNPJ</p>
-                    <p className="font-mono font-medium">
-                      {(order as any).orcamentoCnpj}
-                    </p>
-                  </div>
-                )}
-
-                {(order as any).orcamentoPagamento && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">
-                      Forma de Pagamento
-                    </p>
-                    <p className="font-medium">
-                      {(order as any).orcamentoPagamento}
-                    </p>
-                  </div>
-                )}
-
-                {(order as any).orcamentoPrazo && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Prazo</p>
-                    <p className="font-medium">
-                      {(order as any).orcamentoPrazo}
-                    </p>
-                  </div>
-                )}
-
-                {(order as any).orcamentoBanco && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Banco</p>
-                    <p className="font-medium">
-                      {(order as any).orcamentoBanco}
-                    </p>
-                  </div>
-                )}
-
-                {(order as any).orcamentoAgencia && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Agência</p>
-                    <p className="font-mono font-medium">
-                      {(order as any).orcamentoAgencia}
-                    </p>
-                  </div>
-                )}
-
-                {(order as any).orcamentoConta && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Conta</p>
-                    <p className="font-mono font-medium">
-                      {(order as any).orcamentoConta}
-                    </p>
-                  </div>
-                )}
-
-                {(order as any).orcamentoTitular && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Titular</p>
-                    <p className="font-medium">
-                      {(order as any).orcamentoTitular}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {order.description && (
-            <Card className="border shadow-sm">
-              <CardContent className="pt-4 pb-4">
-                <p className="text-xs text-muted-foreground mb-1">Descrição</p>
-                <p className="text-sm text-foreground">{order.description}</p>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
-        <div className="space-y-6">
-          {/* Fotos do processo */}
-          {isOS &&
-            ((order as any).kmHorimetroFotoUrl ||
-              evidencePhotoUrls.length > 0) && (
-              <Card className="border shadow-sm">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-primary" />
-                    Fotos do processo
-                  </CardTitle>
-                </CardHeader>
-
-                <CardContent className="space-y-4">
-                  {(order as any).kmHorimetroFotoUrl && (
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-2">
-                        Foto do KM / Horímetro
-                      </p>
-
-                      <button
-                        type="button"
-                        className="block w-40 h-28 overflow-hidden rounded-lg border bg-muted hover:opacity-90 transition-opacity"
-                        onClick={() =>
-                          setSelectedImageUrl((order as any).kmHorimetroFotoUrl)
-                        }
-                      >
-                        <img
-                          src={(order as any).kmHorimetroFotoUrl}
-                          alt="Foto do KM / Horímetro"
-                          className="w-full h-full object-cover"
-                        />
-                      </button>
-                    </div>
-                  )}
-
-                  {evidencePhotoUrls.length > 0 && (
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-2">
-                        Evidências
-                      </p>
-
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                        {evidencePhotoUrls.map((url, index) => (
-                          <button
-                            key={`${url}-${index}`}
-                            type="button"
-                            className="aspect-video overflow-hidden rounded-lg border bg-muted hover:opacity-90 transition-opacity"
-                            onClick={() => setSelectedImageUrl(url)}
-                          >
-                            <img
-                              src={url}
-                              alt={`Evidência ${index + 1}`}
-                              className="w-full h-full object-cover"
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-        </div>
-      </div>
-
-      {/* Material Requests */}
-      {canViewMaterialRequests && (
-        <Card className="border shadow-sm overflow-hidden">
-          <CardHeader className="pb-3 border-b bg-muted/20">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Package className="h-4 w-4 text-primary" />
-                Requisições de materiais
-              </CardTitle>
-
-              {isAdmin && (
-                <Badge
-                  variant="outline"
-                  className="w-fit bg-blue-50 text-blue-700 border-blue-200"
-                >
-                  Admin acompanha, mas não solicita material
-                </Badge>
-              )}
-
-              {isEstoquista && (
-                <Badge
-                  variant="outline"
-                  className="w-fit bg-emerald-50 text-emerald-700 border-emerald-200"
-                >
-                  Estoquista separa e entrega
-                </Badge>
-              )}
-            </div>
-          </CardHeader>
-
-          <CardContent className="space-y-5 pt-4">
-            {canRequestMaterial && (
-              <div className="rounded-xl border bg-background p-4 space-y-4">
-                <div>
-                  <p className="text-sm font-semibold text-foreground">
-                    Solicitar material ao estoque
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Use esta opção para pedir material para a sua própria OS.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label>Item do estoque *</Label>
-                    <Select
-                      value={materialForm.inventoryItemId}
-                      onValueChange={value => {
-                        const selected = (inventoryItems ?? []).find(
-                          item => String(item.id) === value
-                        );
-
-                        setMaterialForm(prev => ({
-                          ...prev,
-                          inventoryItemId: value,
-                          itemName: selected?.name ?? "",
-                          unit: selected?.unit ?? prev.unit,
-                          unitCost: selected?.unitCost
-                            ? String(selected.unitCost)
-                            : "",
-                        }));
-                      }}
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue placeholder="Selecione" />
-                      </SelectTrigger>
-
-                      <SelectContent>
-                        {(inventoryItems ?? []).map(item => (
-                          <SelectItem key={item.id} value={String(item.id)}>
-                            {item.name}
-                            {item.barcode ? ` — ${item.barcode}` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label>Quantidade solicitada *</Label>
-                    <Input
-                      className="mt-1.5"
-                      type="number"
-                      min="0"
-                      step="0.001"
-                      value={materialForm.quantityRequested}
-                      onChange={e =>
-                        setMaterialForm(prev => ({
-                          ...prev,
-                          quantityRequested: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <div>
-                    <Label>Unidade</Label>
-                    <Input
-                      className="mt-1.5"
-                      value={materialForm.unit}
-                      onChange={e =>
-                        setMaterialForm(prev => ({
-                          ...prev,
-                          unit: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <div>
-                    <Label>Custo unitário</Label>
-                    <Input
-                      className="mt-1.5"
-                      value={materialForm.unitCost}
-                      onChange={e =>
-                        setMaterialForm(prev => ({
-                          ...prev,
-                          unitCost: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <Label>Observação</Label>
-                    <Textarea
-                      className="mt-1.5 resize-none"
-                      rows={3}
-                      value={materialForm.notes}
-                      onChange={e =>
-                        setMaterialForm(prev => ({
-                          ...prev,
-                          notes: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-
+              {canManageOSItems && (
                 <Button
-                  onClick={handleSubmitMaterialRequest}
-                  disabled={
-                    !materialForm.itemName.trim() ||
-                    !materialForm.quantityRequested.trim() ||
-                    createMaterialRequestMutation.isPending
-                  }
+                  size="sm"
+                  onClick={() => setShowAddItem(true)}
+                  className="h-8 gap-1.5"
                 >
-                  {createMaterialRequestMutation.isPending
-                    ? "Solicitando..."
-                    : "Solicitar ao estoque"}
+                  <Plus className="h-4 w-4" />
+                  Adicionar Item
                 </Button>
-              </div>
-            )}
-
-            {isAdmin && (
-              <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4">
-                <p className="text-sm font-medium text-blue-800">
-                  Admin não abre requisição de material.
-                </p>
-                <p className="text-xs text-blue-700 mt-1">
-                  O solicitante da OS pede material ao estoque. O admin pode
-                  adicionar ou remover itens diretamente da OS e acompanhar o
-                  andamento das requisições.
-                </p>
-              </div>
-            )}
-
-            <div className="rounded-lg border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50">
-                  <tr>
-                    <th className="text-left px-3 py-2 font-semibold">Item</th>
-                    <th className="text-left px-3 py-2 font-semibold">
-                      Solicitado
-                    </th>
-                    <th className="text-left px-3 py-2 font-semibold">
-                      Entregue
-                    </th>
-                    <th className="text-left px-3 py-2 font-semibold">
-                      Status
-                    </th>
-                    <th className="text-left px-3 py-2 font-semibold">
-                      Retirado por
-                    </th>
-                    <th className="text-right px-3 py-2 font-semibold">
-                      Ações
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y">
-                  {materialRequestRows.length === 0 ? (
+              )}
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50/80 border-b">
                     <tr>
-                      <td
-                        colSpan={6}
-                        className="px-3 py-8 text-center text-muted-foreground"
-                      >
-                        Nenhuma requisição de material.
-                      </td>
+                      <th className="px-4 py-3 text-left font-semibold text-slate-600">
+                        Descrição do Item / Serviço
+                      </th>
+                      <th className="px-4 py-3 text-right font-semibold text-slate-600">
+                        Qtd.
+                      </th>
+                      <th className="px-4 py-3 text-right font-semibold text-slate-600">
+                        Custo Unit.
+                      </th>
+                      <th className="px-4 py-3 text-right font-semibold text-slate-600">
+                        Total
+                      </th>
+                      {canManageOSItems && <th className="px-4 py-3" />}
                     </tr>
-                  ) : (
-                    materialRequestRows.map(request => (
-                      <tr key={request.id} className="hover:bg-muted/20">
-                        <td className="px-3 py-2">
-                          <p className="font-medium">{request.itemName}</p>
-                          {request.notes && (
-                            <p className="text-xs text-muted-foreground">
-                              {request.notes}
-                            </p>
-                          )}
-                        </td>
-
-                        <td className="px-3 py-2">
-                          {request.quantityRequested} {request.unit ?? ""}
-                        </td>
-
-                        <td className="px-3 py-2">
-                          {request.quantityDelivered &&
-                          Number(request.quantityDelivered) > 0
-                            ? `${request.quantityDelivered} ${request.unit ?? ""}`
-                            : "—"}
-                        </td>
-
-                        <td className="px-3 py-2">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${getMaterialStatusClass(
-                              request.status
-                            )}`}
-                          >
-                            {request.status}
-                          </Badge>
-                        </td>
-
-                        <td className="px-3 py-2">
-                          {request.withdrawnByName ?? "—"}
-                        </td>
-
-                        <td className="px-3 py-2">
-                          <div className="flex justify-end gap-1">
-                            {canProcessMaterialRequests &&
-                              request.status === "Solicitado" && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    separateMaterialRequestMutation.mutate({
-                                      id: request.id,
-                                    })
-                                  }
-                                  disabled={
-                                    separateMaterialRequestMutation.isPending
-                                  }
-                                >
-                                  Separar
-                                </Button>
-                              )}
-
-                            {canProcessMaterialRequests &&
-                              (request.status === "Solicitado" ||
-                                request.status === "Separado") && (
-                                <Button
-                                  size="sm"
-                                  onClick={() => {
-                                    setDeliverTarget(request);
-                                    setDeliverForm({
-                                      quantityDelivered:
-                                        request.quantityDelivered &&
-                                        Number(request.quantityDelivered) > 0
-                                          ? String(request.quantityDelivered)
-                                          : String(request.quantityRequested),
-                                      withdrawnByName: "",
-                                    });
-                                  }}
-                                >
-                                  Entregar
-                                </Button>
-                              )}
-
-                            {(isAdmin || isEstoquista) &&
-                              request.status !== "Entregue" &&
-                              request.status !== "Cancelado" && (
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  className="text-destructive hover:text-destructive"
-                                  onClick={() =>
-                                    cancelMaterialRequestMutation.mutate({
-                                      id: request.id,
-                                    })
-                                  }
-                                  disabled={
-                                    cancelMaterialRequestMutation.isPending
-                                  }
-                                >
-                                  Cancelar
-                                </Button>
-                              )}
-                          </div>
+                  </thead>
+                  <tbody className="divide-y">
+                    {(order.items ?? []).length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={canManageOSItems ? 5 : 4}
+                          className="px-4 py-12 text-center text-muted-foreground"
+                        >
+                          Nenhum item adicionado a esta ordem.
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                    ) : (
+                      (order.items ?? []).map(item => {
+                        const qty = parseFloat(String(item.quantity));
+                        const cost = parseFloat(String(item.unitCost ?? 0));
+                        const total = qty * cost;
 
-      {/* Tabs */}
-      <Tabs defaultValue="items">
-        <TabsList className="bg-muted/60">
-          <TabsTrigger value="items" className="gap-1.5">
-            <Package className="h-4 w-4" />
-            Itens Utilizados ({order.items?.length ?? 0})
-          </TabsTrigger>
-
-          <TabsTrigger value="alerts" className="gap-1.5">
-            <AlertTriangle className="h-4 w-4" />
-            Alertas ({orderAlerts.length})
-            {pendingAlerts.length > 0 && (
-              <span className="ml-1 h-4 w-4 rounded-full bg-destructive text-destructive-foreground text-[10px] flex items-center justify-center font-bold">
-                {pendingAlerts.length}
-              </span>
-            )}
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="items" className="mt-4">
-          <Card className="border shadow-sm">
-            <CardHeader className="pb-3 flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-base">Itens da Ordem</CardTitle>
-
-                {isOS && osTotalCost > 0 && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Valor total:{" "}
-                    <span className="font-bold text-cyan-700">
-                      R${" "}
-                      {osTotalCost.toLocaleString("pt-BR", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </span>
-                  </p>
-                )}
+                        return (
+                          <tr key={item.id} className="hover:bg-slate-50/50">
+                            <td className="px-4 py-4">
+                              <p className="font-medium text-slate-900">
+                                {item.itemName}
+                              </p>
+                              {item.notes && (
+                                <p className="mt-1 text-xs text-muted-foreground italic">
+                                  {item.notes}
+                                </p>
+                              )}
+                            </td>
+                            <td className="px-4 py-4 text-right">
+                              <span className="font-mono">
+                                {qty.toFixed(3)}
+                              </span>
+                              <span className="ml-1 text-xs text-muted-foreground">
+                                {item.unit ?? "un"}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4 text-right font-mono text-slate-600">
+                              R$ {cost.toFixed(2)}
+                            </td>
+                            <td className="px-4 py-4 text-right font-bold text-slate-900">
+                              R$ {total.toFixed(2)}
+                            </td>
+                            {canManageOSItems && (
+                              <td className="px-4 py-4 text-right">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground hover:text-red-600"
+                                  onClick={() =>
+                                    removeItem.mutate({ id: item.id })
+                                  }
+                                  disabled={removeItem.isPending}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
               </div>
+            </CardContent>
+          </Card>
 
-              <div className="flex items-center gap-2">
-                {canManageOSItems && (
+          {/* Requisições de Material (Apenas OS) */}
+          {canViewMaterialRequests && (
+            <Card className="border shadow-sm">
+              <CardHeader className="flex flex-row items-center justify-between border-b bg-slate-50/50 py-4">
+                <div className="flex items-center gap-2">
+                  <ClipboardList className="h-5 w-5 text-primary" />
+                  <CardTitle className="text-base font-bold">
+                    Requisições ao Estoque
+                  </CardTitle>
+                </div>
+
+                {canRequestMaterial && (
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => setShowStockConsult(true)}
-                    className="gap-1.5 text-xs"
+                    className="h-8 gap-1.5"
                   >
-                    <Boxes className="h-3.5 w-3.5 text-primary" />
+                    <Search className="h-4 w-4" />
                     Consultar Estoque
                   </Button>
                 )}
+              </CardHeader>
+              <CardContent className="p-6">
+                {canRequestMaterial && (
+                  <div className="mb-8 rounded-2xl border border-primary/10 bg-primary/5 p-5">
+                    <h3 className="mb-4 text-sm font-bold flex items-center gap-2">
+                      <Plus className="h-4 w-4" />
+                      Nova Requisição
+                    </h3>
 
-                {canManageOSItems && (
-                  <Button
-                    size="sm"
-                    onClick={() => setShowAddItem(true)}
-                    className="gap-1.5"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Adicionar Item
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-
-            <CardContent>
-              {!order.items?.length ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Package className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">Nenhum item adicionado ainda.</p>
-
-                  {isOS && (
-                    <p className="text-xs mt-1">
-                      Use <strong>Consultar Estoque</strong> para selecionar
-                      itens disponíveis.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {order.items.map(item => (
-                    <div
-                      key={item.id}
-                      className="flex items-center gap-3 p-3 rounded-lg border bg-muted/20 hover:bg-muted/40 transition-colors"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {item.itemName}
-                        </p>
-
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {item.quantity} {item.unit ?? "un"}
-                          {item.unitCost
-                            ? ` · R$ ${parseFloat(
-                                String(item.unitCost)
-                              ).toFixed(2)} / un`
-                            : ""}
-                          {item.notes ? ` · ${item.notes}` : ""}
-                        </p>
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+                      <div className="md:col-span-5">
+                        <Label className="text-xs">Item do Estoque</Label>
+                        <Input
+                          placeholder="Selecione um item..."
+                          value={materialForm.itemName}
+                          readOnly
+                          className="mt-1 bg-white cursor-default"
+                          onClick={() => setShowStockConsult(true)}
+                        />
                       </div>
 
-                      {item.unitCost && (
-                        <span className="text-sm font-semibold text-foreground shrink-0">
-                          R${" "}
-                          {(
-                            parseFloat(String(item.quantity)) *
-                            parseFloat(String(item.unitCost))
-                          ).toFixed(2)}
-                        </span>
-                      )}
-
-                      {canManageOSItems && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 w-7 p-0 hover:bg-destructive/10 hover:text-destructive shrink-0"
-                          onClick={() =>
-                            removeItem.mutate({
-                              id: item.id,
-                              orderId,
-                            })
+                      <div className="md:col-span-2">
+                        <Label className="text-xs">Qtd.</Label>
+                        <Input
+                          type="number"
+                          placeholder="0.000"
+                          value={materialForm.quantityRequested}
+                          onChange={e =>
+                            setMaterialForm(prev => ({
+                              ...prev,
+                              quantityRequested: e.target.value,
+                            }))
                           }
-                          disabled={removeItem.isPending}
+                          className="mt-1 bg-white"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <Label className="text-xs">Unidade</Label>
+                        <Input
+                          value={materialForm.unit}
+                          readOnly
+                          className="mt-1 bg-slate-50 text-muted-foreground"
+                        />
+                      </div>
+
+                      <div className="md:col-span-3 flex items-end">
+                        <Button
+                          className="w-full gap-1.5"
+                          onClick={handleSubmitMaterialRequest}
+                          disabled={createMaterialRequestMutation.isPending}
                         >
-                          <Trash2 className="h-3.5 w-3.5" />
+                          <Plus className="h-4 w-4" />
+                          Solicitar
                         </Button>
-                      )}
+                      </div>
+
+                      <div className="md:col-span-12">
+                        <Label className="text-xs">Observações</Label>
+                        <Input
+                          placeholder="Ex: Urgente, peça original, etc."
+                          value={materialForm.notes}
+                          onChange={e =>
+                            setMaterialForm(prev => ({
+                              ...prev,
+                              notes: e.target.value,
+                            }))
+                          }
+                          className="mt-1 bg-white"
+                        />
+                      </div>
                     </div>
-                  ))}
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  {materialRequestRows.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground border rounded-xl border-dashed">
+                      <p className="text-sm">Nenhuma requisição realizada.</p>
+                    </div>
+                  ) : (
+                    materialRequestRows.map(request => (
+                      <div
+                        key={request.id}
+                        className="flex flex-col gap-4 rounded-2xl border p-4 transition-all hover:shadow-md md:flex-row md:items-center md:justify-between"
+                      >
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold text-slate-900">
+                              {request.itemName}
+                            </p>
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] ${getMaterialStatusClass(
+                                request.status
+                              )}`}
+                            >
+                              {request.status}
+                            </Badge>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <Package className="h-3 w-3" />
+                              Solicitado:{" "}
+                              <strong className="text-slate-700">
+                                {parseFloat(
+                                  String(request.quantityRequested)
+                                ).toFixed(3)}{" "}
+                                {request.unit}
+                              </strong>
+                            </span>
+
+                            {request.status === "Entregue" && (
+                              <span className="flex items-center gap-1 text-emerald-600 font-medium">
+                                <CheckCircle2 className="h-3 w-3" />
+                                Entregue:{" "}
+                                {parseFloat(
+                                  String(request.quantityDelivered)
+                                ).toFixed(3)}{" "}
+                                {request.unit}
+                              </span>
+                            )}
+
+                            <span className="flex items-center gap-1">
+                              <Info className="h-3 w-3" />
+                              Por: {request.requestedByName}
+                            </span>
+                          </div>
+
+                          {request.notes && (
+                            <p className="mt-2 text-xs italic text-slate-500 bg-slate-50 p-2 rounded-lg border-l-2 border-slate-300">
+                              "{request.notes}"
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 border-t pt-4 md:border-t-0 md:pt-0">
+                          {canProcessMaterialRequests &&
+                            request.status === "Solicitado" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 gap-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                onClick={() =>
+                                  separateMaterialRequestMutation.mutate({
+                                    id: request.id,
+                                  })
+                                }
+                                disabled={
+                                  separateMaterialRequestMutation.isPending
+                                }
+                              >
+                                <Package className="h-4 w-4" />
+                                Separar
+                              </Button>
+                            )}
+
+                          {canProcessMaterialRequests &&
+                            (request.status === "Solicitado" ||
+                              request.status === "Separado") && (
+                              <Button
+                                size="sm"
+                                className="h-8 gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+                                onClick={() => {
+                                  setDeliverTarget(request);
+                                  setDeliverForm({
+                                    quantityDelivered: String(
+                                      request.quantityRequested
+                                    ),
+                                    withdrawnByName:
+                                      order.creatorName || "",
+                                  });
+                                }}
+                              >
+                                <CheckCircle2 className="h-4 w-4" />
+                                Entregar
+                              </Button>
+                            )}
+
+                          {(canProcessMaterialRequests ||
+                            (isOrderCreator &&
+                              request.status === "Solicitado")) && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 w-8 p-0 text-muted-foreground hover:text-red-600"
+                              onClick={() => {
+                                if (
+                                  confirm(
+                                    "Tem certeza que deseja cancelar esta requisição?"
+                                  )
+                                ) {
+                                  cancelMaterialRequestMutation.mutate({
+                                    id: request.id,
+                                  });
+                                }
+                              }}
+                              disabled={cancelMaterialRequestMutation.isPending}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
+        <div className="space-y-6">
+          {/* Informações Adicionais */}
+          <Card className="border shadow-sm">
+            <CardHeader className="border-b bg-slate-50/50 py-4">
+              <CardTitle className="text-sm font-bold">
+                Detalhes da Execução
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 p-5">
+              <div className="space-y-1">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Tipo de Serviço
+                </Label>
+                <p className="text-sm font-semibold text-slate-900">
+                  {(order as any).tipoServico || "—"}
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  KM / Horímetro
+                </Label>
+                <p className="text-sm font-semibold text-slate-900">
+                  {(order as any).kmHorimetro || "—"}
+                </p>
+              </div>
+
+              {order.description && (
+                <div className="space-y-1 pt-2 border-t">
+                  <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Descrição / Problema
+                  </Label>
+                  <p className="text-sm text-slate-700 leading-relaxed">
+                    {order.description}
+                  </p>
+                </div>
+              )}
+
+              {(order as any).informeTecnico && (
+                <div className="space-y-1 pt-2 border-t">
+                  <Label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Informe Técnico / Causa
+                  </Label>
+                  <p className="text-sm text-slate-700 leading-relaxed italic">
+                    {(order as any).informeTecnico}
+                  </p>
                 </div>
               )}
             </CardContent>
           </Card>
-        </TabsContent>
 
-        <TabsContent value="alerts" className="mt-4">
+          {/* Fotos e Evidências */}
           <Card className="border shadow-sm">
-            <CardHeader className="pb-3 flex-row items-center justify-between">
-              <CardTitle className="text-base">Alertas de Manutenção</CardTitle>
+            <CardHeader className="border-b bg-slate-50/50 py-4">
+              <CardTitle className="text-sm font-bold">Evidências</CardTitle>
+            </CardHeader>
+            <CardContent className="p-5">
+              <div className="grid grid-cols-2 gap-3">
+                {(order as any).kmHorimetroFotoUrl && (
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-bold uppercase text-muted-foreground">
+                      KM/Horímetro
+                    </p>
+                    <div
+                      className="aspect-square overflow-hidden rounded-xl border bg-slate-100 cursor-pointer transition-transform hover:scale-[1.02]"
+                      onClick={() =>
+                        setSelectedImageUrl((order as any).kmHorimetroFotoUrl)
+                      }
+                    >
+                      <img
+                        src={(order as any).kmHorimetroFotoUrl}
+                        alt="KM"
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                  </div>
+                )}
 
-              {order.licensePlate && (
+                {/* Evidências extras (parsing do JSON de fotos) */}
+                {(() => {
+                  try {
+                    const fotos = JSON.parse((order as any).evidenciaFotos || "[]");
+                    return Array.isArray(fotos) ? fotos.map((url, idx) => (
+                      <div key={idx} className="space-y-2">
+                        <p className="text-[10px] font-bold uppercase text-muted-foreground">
+                          Foto {idx + 1}
+                        </p>
+                        <div
+                          className="aspect-square overflow-hidden rounded-xl border bg-slate-100 cursor-pointer transition-transform hover:scale-[1.02]"
+                          onClick={() => setSelectedImageUrl(url)}
+                        >
+                          <img
+                            src={url}
+                            alt={`Evidência ${idx + 1}`}
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                      </div>
+                    )) : null;
+                  } catch {
+                    return null;
+                  }
+                })()}
+              </div>
+
+              {!(order as any).kmHorimetroFotoUrl &&
+                !(order as any).evidenciaFotos && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p className="text-xs italic">Nenhuma foto anexada.</p>
+                  </div>
+                )}
+            </CardContent>
+          </Card>
+
+          {/* Alertas do Veículo */}
+          <Card className="border shadow-sm">
+            <CardHeader className="flex flex-row items-center justify-between border-b bg-slate-50/50 py-4">
+              <CardTitle className="text-sm font-bold">Alertas</CardTitle>
+              {!isFinalized && (
                 <Button
-                  size="sm"
-                  variant="outline"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 rounded-full"
                   onClick={() => setShowAddAlert(true)}
-                  className="gap-1.5"
                 >
                   <Plus className="h-4 w-4" />
-                  Novo Alerta
                 </Button>
               )}
             </CardHeader>
-
-            <CardContent>
-              {!order.licensePlate ? (
-                <p className="text-center py-8 text-muted-foreground text-sm">
-                  Esta ordem não possui placa de veículo vinculada.
-                </p>
-              ) : !orderAlerts.length ? (
-                <p className="text-center py-8 text-muted-foreground text-sm">
-                  Nenhum alerta para a placa {order.licensePlate}.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {orderAlerts.map(alert => (
+            <CardContent className="p-5">
+              <div className="space-y-3">
+                {orderAlerts.length === 0 ? (
+                  <p className="text-center text-xs text-muted-foreground py-4">
+                    Nenhum alerta para este veículo.
+                  </p>
+                ) : (
+                  orderAlerts.map(alert => (
                     <div
                       key={alert.id}
-                      className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                      className={`flex items-start gap-3 rounded-xl border p-3 transition-colors ${
                         alert.resolved === "yes"
-                          ? "bg-muted/20 opacity-60"
-                          : "bg-amber-50 border-amber-200"
+                          ? "bg-slate-50 opacity-60"
+                          : "bg-amber-50/50 border-amber-100"
                       }`}
                     >
-                      <AlertTriangle
-                        className={`h-4 w-4 mt-0.5 shrink-0 ${
+                      <div
+                        className={`mt-0.5 rounded-full p-1 ${
                           alert.resolved === "yes"
-                            ? "text-muted-foreground"
-                            : "text-amber-600"
+                            ? "bg-slate-200 text-slate-500"
+                            : "bg-amber-100 text-amber-600"
                         }`}
-                      />
-
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium">
-                          {alert.description}
-                        </p>
-
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Criado por {alert.createdByName ?? "—"} em{" "}
-                          {format(new Date(alert.createdAt), "dd/MM/yyyy", {
-                            locale: ptBR,
-                          })}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Badge
-                          variant={
-                            alert.resolved === "yes"
-                              ? "secondary"
-                              : "destructive"
-                          }
-                          className="text-xs"
-                        >
-                          {alert.resolved === "yes" ? "Resolvido" : "Pendente"}
-                        </Badge>
-
-                        {alert.resolved === "no" && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7 text-xs"
-                            onClick={() =>
-                              resolveAlert.mutate({ id: alert.id })
-                            }
-                          >
-                            Resolver
-                          </Button>
+                      >
+                        {alert.resolved === "yes" ? (
+                          <CheckCircle2 className="h-3 w-3" />
+                        ) : (
+                          <AlertTriangle className="h-3 w-3" />
                         )}
                       </div>
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className={`text-xs font-medium leading-tight ${
+                            alert.resolved === "yes"
+                              ? "text-slate-500 line-through"
+                              : "text-slate-900"
+                          }`}
+                        >
+                          {alert.description}
+                        </p>
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {format(new Date(alert.createdAt), "dd/MM/yy 'às' HH:mm")}
+                        </p>
+                      </div>
+                      {!isFinalized && alert.resolved === "no" && isAdmin && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-[10px] text-amber-700 hover:text-amber-800 hover:bg-amber-100"
+                          onClick={() => resolveAlert.mutate({ id: alert.id })}
+                          disabled={resolveAlert.isPending}
+                        >
+                          Resolver
+                        </Button>
+                      )}
                     </div>
-                  ))}
-                </div>
-              )}
+                  ))
+                )}
+              </div>
             </CardContent>
           </Card>
-        </TabsContent>
-      </Tabs>
+        </div>
+      </div>
 
+      {/* Modais */}
       <StockConsultModal
         open={showStockConsult}
         onClose={() => setShowStockConsult(false)}
         onSelect={item => {
-          setItemForm({
+          setMaterialForm(prev => ({
+            ...prev,
+            inventoryItemId: String(item.id),
             itemName: item.name,
-            quantity: "1",
+            unit: item.unit || "un",
             unitCost: item.unitCost ? String(item.unitCost) : "",
-            unit: item.unit ?? "un",
-            notes: item.barcode ? `Cód: ${item.barcode}` : "",
-            inventoryItemId: item.id,
-          });
-
-          setShowAddItem(true);
+          }));
         }}
       />
 
       <Dialog open={showAddItem} onOpenChange={setShowAddItem}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Adicionar Item</DialogTitle>
-
+            <DialogTitle>Adicionar Item / Serviço</DialogTitle>
             <DialogDescription>
-              {isOS
-                ? 'Use "Consultar Estoque" para selecionar um item existente.'
-                : "Preencha os dados do item."}
+              Descreva o material ou serviço executado.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3 py-2">
-            <div className="flex items-end gap-2">
-              <div className="flex-1">
-                <Label>Nome do Item *</Label>
-
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Descrição</Label>
+              <div className="flex gap-2">
                 <Input
-                  className="mt-1.5"
+                  placeholder="Nome do item ou serviço"
                   value={itemForm.itemName}
                   onChange={e =>
-                    setItemForm({
-                      ...itemForm,
-                      itemName: e.target.value,
-                    })
+                    setItemForm(prev => ({ ...prev, itemName: e.target.value }))
                   }
-                  placeholder="Nome do item..."
+                  className="flex-1"
                 />
-              </div>
-
-              {isOS && (
                 <Button
-                  type="button"
                   variant="outline"
-                  size="sm"
-                  className="gap-1.5 shrink-0 mb-0.5"
-                  onClick={() => {
-                    setShowAddItem(false);
-                    setShowStockConsult(true);
-                  }}
+                  size="icon"
+                  onClick={() => setShowStockConsult(true)}
+                  title="Consultar Estoque"
                 >
-                  <Boxes className="h-3.5 w-3.5" />
-                  Estoque
+                  <Search className="h-4 w-4" />
                 </Button>
-              )}
+              </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <Label>Quantidade *</Label>
-
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label>Quantidade</Label>
                 <Input
-                  className="mt-1.5"
                   type="number"
-                  min="0"
+                  placeholder="0.000"
                   value={itemForm.quantity}
                   onChange={e =>
-                    setItemForm({
-                      ...itemForm,
-                      quantity: e.target.value,
-                    })
+                    setItemForm(prev => ({ ...prev, quantity: e.target.value }))
                   }
                 />
               </div>
-
-              <div>
+              <div className="grid gap-2">
                 <Label>Unidade</Label>
-
                 <Input
-                  className="mt-1.5"
+                  placeholder="un, kg, lt..."
                   value={itemForm.unit}
                   onChange={e =>
-                    setItemForm({
-                      ...itemForm,
-                      unit: e.target.value,
-                    })
-                  }
-                />
-              </div>
-
-              <div>
-                <Label>Custo Unit. (R$)</Label>
-
-                <Input
-                  className="mt-1.5"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={itemForm.unitCost}
-                  onChange={e =>
-                    setItemForm({
-                      ...itemForm,
-                      unitCost: e.target.value,
-                    })
+                    setItemForm(prev => ({ ...prev, unit: e.target.value }))
                   }
                 />
               </div>
             </div>
 
-            <div>
-              <Label>Observações</Label>
-
+            <div className="grid gap-2">
+              <Label>Custo Unitário (R$)</Label>
               <Input
-                className="mt-1.5"
+                type="number"
+                placeholder="0.00"
+                value={itemForm.unitCost}
+                onChange={e =>
+                  setItemForm(prev => ({ ...prev, unitCost: e.target.value }))
+                }
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label>Observações</Label>
+              <Textarea
+                placeholder="Opcional..."
                 value={itemForm.notes}
                 onChange={e =>
-                  setItemForm({
-                    ...itemForm,
-                    notes: e.target.value,
-                  })
+                  setItemForm(prev => ({ ...prev, notes: e.target.value }))
                 }
-                placeholder="Observações adicionais..."
+                className="h-20"
               />
             </div>
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAddItem(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setShowAddItem(false)}
+              className="rounded-xl"
+            >
               Cancelar
             </Button>
-
             <Button
               onClick={() =>
                 addItem.mutate({
                   orderId,
                   itemName: itemForm.itemName,
                   quantity: itemForm.quantity,
-                  unitCost: itemForm.unitCost || undefined,
-                  unit: itemForm.unit || undefined,
-                  notes: itemForm.notes || undefined,
+                  unitCost: itemForm.unitCost || "0",
+                  unit: itemForm.unit,
+                  notes: itemForm.notes,
                   inventoryItemId: itemForm.inventoryItemId,
                 })
               }
-              disabled={
-                !itemForm.itemName.trim() ||
-                !itemForm.quantity.trim() ||
-                addItem.isPending
-              }
+              disabled={addItem.isPending || !itemForm.itemName || !itemForm.quantity}
+              className="rounded-xl"
             >
-              {addItem.isPending ? "Adicionando..." : "Adicionar"}
+              Adicionar
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={showRejectDialog} onOpenChange={setShowRejectDialog}>
-        <DialogContent>
+      <Dialog open={showAddAlert} onOpenChange={setShowAddAlert}>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-red-600 flex items-center gap-2">
-              <XCircle className="h-5 w-5" />
-              Reprovar OC
-            </DialogTitle>
-
+            <DialogTitle>Novo Alerta</DialogTitle>
             <DialogDescription>
-              Informe o motivo da reprovação. O solicitante poderá visualizar
-              este motivo.
+              Crie um alerta de manutenção para este veículo.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="py-2">
-            <Label>Motivo da Reprovação *</Label>
-
+          <div className="py-4">
+            <Label>Descrição do Alerta</Label>
             <Textarea
-              className="mt-1.5 resize-none"
-              rows={3}
-              placeholder="Descreva o motivo da reprovação..."
-              value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)}
+              placeholder="Ex: Trocar pneus traseiros em breve..."
+              value={alertForm.description}
+              onChange={e => setAlertForm({ description: e.target.value })}
+              className="mt-2 h-24"
             />
           </div>
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowRejectDialog(false)}
-            >
+            <Button variant="outline" onClick={() => setShowAddAlert(false)}>
               Cancelar
             </Button>
-
             <Button
-              variant="destructive"
               onClick={() =>
-                reject.mutate({
-                  id: orderId,
-                  reason: rejectReason,
+                createAlert.mutate({
+                  licensePlate: order.licensePlate!,
+                  description: alertForm.description,
                 })
               }
-              disabled={!rejectReason.trim() || reject.isPending}
+              disabled={createAlert.isPending || !alertForm.description.trim()}
             >
-              {reject.isPending ? "Reprovando..." : "Confirmar Reprovação"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showAuthorizeDialog} onOpenChange={setShowAuthorizeDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="text-violet-600 flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5" />
-              Autorizar OC
-            </DialogTitle>
-
-            <DialogDescription>
-              Registre o número da OC gerada no sistema externo e faça upload do
-              PDF opcional.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3 py-2">
-            <div>
-              <Label>Número da OC *</Label>
-
-              <Input
-                className="mt-1.5 font-mono"
-                placeholder="Ex: OC-2024-0001"
-                value={authorizeForm.ocNumber}
-                onChange={e =>
-                  setAuthorizeForm({
-                    ...authorizeForm,
-                    ocNumber: e.target.value,
-                  })
-                }
-              />
-            </div>
-
-            <div>
-              <Label>PDF da OC opcional</Label>
-
-              <Input
-                className="mt-1.5"
-                type="file"
-                accept=".pdf,application/pdf"
-                onChange={e => setPdfFile(e.target.files?.[0] ?? null)}
-              />
-
-              {pdfFile && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Arquivo: {pdfFile.name}
-                </p>
-              )}
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowAuthorizeDialog(false)}
-            >
-              Cancelar
-            </Button>
-
-            <Button
-              className="bg-violet-600 hover:bg-violet-700 text-white"
-              onClick={handleAuthorize}
-              disabled={!authorizeForm.ocNumber.trim() || authorize.isPending}
-            >
-              {authorize.isPending ? "Autorizando..." : "Autorizar OC"}
+              Criar Alerta
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1990,43 +1502,23 @@ export default function OrderDetailPage() {
       <Dialog open={showFinalizeDialog} onOpenChange={setShowFinalizeDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-emerald-700 flex items-center gap-2">
-              <Flag className="h-5 w-5" />
-              Finalizar Ordem de Serviço
-            </DialogTitle>
-
+            <DialogTitle>Finalizar Ordem de Serviço</DialogTitle>
             <DialogDescription>
-              Ao finalizar a OS <strong>{order.orderNumber}</strong>, ela será
-              marcada como <strong>Concluída</strong> e não aceitará novos
-              itens.
-              {osTotalCost > 0 && (
-                <span className="block mt-2 text-sm font-semibold text-cyan-700">
-                  Valor total: R${" "}
-                  {osTotalCost.toLocaleString("pt-BR", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
-                </span>
-              )}
+              Tem certeza que deseja finalizar a OS <strong>{order.orderNumber}</strong>? 
+              Esta ação marcará a ordem como concluída e impedirá novas edições.
             </DialogDescription>
           </DialogHeader>
 
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowFinalizeDialog(false)}
-            >
+          <DialogFooter className="mt-4">
+            <Button variant="outline" onClick={() => setShowFinalizeDialog(false)}>
               Cancelar
             </Button>
-
             <Button
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              className="bg-emerald-600 hover:bg-emerald-700"
               onClick={() => finalizeOS.mutate({ id: orderId })}
               disabled={finalizeOS.isPending}
             >
-              {finalizeOS.isPending
-                ? "Finalizando..."
-                : "Confirmar Finalização"}
+              Confirmar Finalização
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2034,54 +1526,46 @@ export default function OrderDetailPage() {
 
       <Dialog
         open={!!deliverTarget}
-        onOpenChange={open => {
-          if (!open) {
-            setDeliverTarget(null);
-            setDeliverForm({ quantityDelivered: "", withdrawnByName: "" });
-          }
-        }}
+        onOpenChange={open => !open && setDeliverTarget(null)}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Entregar material</DialogTitle>
+            <DialogTitle>Confirmar Entrega de Material</DialogTitle>
             <DialogDescription>
-              Confirme a quantidade entregue e informe quem retirou o material.
+              Informe a quantidade entregue e quem retirou o material.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
-            <div className="rounded-lg border bg-muted/30 p-3">
-              <p className="text-sm font-medium">
-                {deliverTarget?.itemName ?? "Material"}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Solicitado: {deliverTarget?.quantityRequested}{" "}
-                {deliverTarget?.unit ?? ""}
-              </p>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Item</Label>
+              <Input value={deliverTarget?.itemName} readOnly className="bg-slate-50" />
             </div>
 
-            <div>
-              <Label>Quantidade entregue *</Label>
-              <Input
-                className="mt-1.5"
-                type="number"
-                min="0"
-                step="0.001"
-                value={deliverForm.quantityDelivered}
-                onChange={e =>
-                  setDeliverForm(prev => ({
-                    ...prev,
-                    quantityDelivered: e.target.value,
-                  }))
-                }
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2">
+                <Label>Qtd. Entregue</Label>
+                <Input
+                  type="number"
+                  value={deliverForm.quantityDelivered}
+                  onChange={e =>
+                    setDeliverForm(prev => ({
+                      ...prev,
+                      quantityDelivered: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Unidade</Label>
+                <Input value={deliverTarget?.unit} readOnly className="bg-slate-50" />
+              </div>
             </div>
 
-            <div>
-              <Label>Retirado por *</Label>
+            <div className="grid gap-2">
+              <Label>Quem retirou?</Label>
               <Input
-                className="mt-1.5"
-                placeholder="Nome de quem retirou"
+                placeholder="Nome da pessoa"
                 value={deliverForm.withdrawnByName}
                 onChange={e =>
                   setDeliverForm(prev => ({
@@ -2094,111 +1578,51 @@ export default function OrderDetailPage() {
           </div>
 
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setDeliverTarget(null);
-                setDeliverForm({ quantityDelivered: "", withdrawnByName: "" });
-              }}
-            >
+            <Button variant="outline" onClick={() => setDeliverTarget(null)}>
               Cancelar
             </Button>
-
             <Button
-              onClick={() => {
-                if (!deliverTarget) return;
-
+              className="bg-emerald-600 hover:bg-emerald-700"
+              onClick={() =>
                 deliverMaterialRequestMutation.mutate({
-                  id: deliverTarget.id,
+                  id: deliverTarget!.id,
                   quantityDelivered: deliverForm.quantityDelivered,
                   withdrawnByName: deliverForm.withdrawnByName,
-                });
-              }}
-              disabled={
-                !deliverForm.quantityDelivered.trim() ||
-                !deliverForm.withdrawnByName.trim() ||
-                deliverMaterialRequestMutation.isPending
-              }
-            >
-              {deliverMaterialRequestMutation.isPending
-                ? "Entregando..."
-                : "Confirmar entrega"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showAddAlert} onOpenChange={setShowAddAlert}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Novo Alerta de Manutenção</DialogTitle>
-
-            <DialogDescription>
-              Descreva o problema de manutenção para a placa{" "}
-              {order.licensePlate}.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="py-2">
-            <Label>Descrição do Alerta *</Label>
-
-            <Textarea
-              className="mt-1.5 resize-none"
-              rows={3}
-              placeholder="Descreva o problema de manutenção..."
-              value={alertForm.description}
-              onChange={e => setAlertForm({ description: e.target.value })}
-            />
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAddAlert(false)}>
-              Cancelar
-            </Button>
-
-            <Button
-              onClick={() =>
-                createAlert.mutate({
-                  licensePlate: order.licensePlate!,
-                  description: alertForm.description,
-                  orderId: order.id,
-                  orderNumber: order.orderNumber,
                 })
               }
-              disabled={!alertForm.description.trim() || createAlert.isPending}
+              disabled={
+                deliverMaterialRequestMutation.isPending ||
+                !deliverForm.quantityDelivered ||
+                !deliverForm.withdrawnByName
+              }
             >
-              {createAlert.isPending ? "Criando..." : "Criar Alerta"}
+              Confirmar Entrega
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Visualizador de Imagem */}
       <Dialog
         open={!!selectedImageUrl}
-        onOpenChange={open => {
-          if (!open) setSelectedImageUrl(null);
-        }}
+        onOpenChange={open => !open && setSelectedImageUrl(null)}
       >
-        <DialogContent className="max-w-6xl w-[95vw] h-[90vh] p-0 overflow-hidden bg-black border-0">
-          <div className="relative w-full h-full flex items-center justify-center">
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="absolute right-4 top-4 z-50 h-10 w-10 rounded-full bg-white/90 text-black hover:bg-white"
-              onClick={() => setSelectedImageUrl(null)}
-            >
-              <X className="h-5 w-5" />
-            </Button>
-
-            {selectedImageUrl && (
+        <DialogContent className="max-w-4xl border-none bg-transparent p-0 shadow-none">
+          {selectedImageUrl && (
+            <div className="relative flex items-center justify-center">
               <img
                 src={selectedImageUrl}
-                alt="Imagem do processo"
-                className="max-h-full max-w-full object-contain"
+                alt="Visualização"
+                className="max-h-[90vh] max-w-full rounded-lg object-contain"
               />
-            )}
-          </div>
+              <button
+                onClick={() => setSelectedImageUrl(null)}
+                className="absolute -right-4 -top-4 flex h-10 w-10 items-center justify-center rounded-full bg-slate-900/80 text-white transition-colors hover:bg-slate-900"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

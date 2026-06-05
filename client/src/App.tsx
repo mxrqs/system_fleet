@@ -14,7 +14,6 @@ import OrderDetailPage from "./pages/OrderDetail";
 import InventoryPage from "./pages/Inventory";
 import MaintenanceAlertsPage from "./pages/MaintenanceAlerts";
 import NewOsRequestPage from "./pages/NewOsRequest";
-import NewOcRequestPage from "./pages/NewOcRequest";
 import ExpenseGroupsPage from "./pages/ExpenseGroupsPage";
 import ChecklistPage from "./pages/Checklist";
 import ContractsPage from "./pages/Contracts";
@@ -23,7 +22,6 @@ import SuppliersPage from "./pages/Suppliers";
 import FleetPage from "./pages/Fleet";
 import FleetDetailsPage from "./pages/FleetDetails";
 import MaintenanceOrdersPage from "./pages/MaintenanceOrders";
-import PurchaseOrdersPage from "./pages/PurchaseOrders";
 import PlaceholderPage from "./pages/PlaceholderPage";
 
 function Router() {
@@ -33,7 +31,6 @@ function Router() {
 
       {/* Solicitações / legado */}
       <Route path="/new-os" component={NewOsRequestPage} />
-      <Route path="/new-oc" component={NewOcRequestPage} />
       <Route path="/my-orders" component={MyOrdersPage} />
       <Route path="/expense-groups" component={ExpenseGroupsPage} />
       <Route path="/orders" component={ManageOrdersPage} />
@@ -43,7 +40,7 @@ function Router() {
       <Route path="/reports">
         <PlaceholderPage
           title="Relatórios"
-          description="Dashboards gerais de OS, OC, estoque, frota, contratos e custos."
+          description="Dashboards gerais de OS, estoque, frota, contratos e custos."
         />
       </Route>
 
@@ -65,8 +62,6 @@ function Router() {
       </Route>
 
       {/* Financeiro */}
-      <Route path="/purchase-orders" component={PurchaseOrdersPage} />
-
       <Route path="/suppliers" component={SuppliersPage} />
 
       <Route path="/costs">
@@ -79,7 +74,7 @@ function Router() {
       <Route path="/invoices">
         <PlaceholderPage
           title="Notas Fiscais"
-          description="Controle de notas fiscais, anexos, vencimentos e vínculo com ordens de compra."
+          description="Controle de notas fiscais, anexos, vencimentos e vínculo com ordens de serviço."
         />
       </Route>
 

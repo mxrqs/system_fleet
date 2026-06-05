@@ -78,9 +78,6 @@ export const appRouter = router({
   orders: router({
     list: publicProcedure.input(z.any().optional()).query((): Order[] => []),
     create: publicProcedure.input(z.any()).mutation(() => ({ success: true, id: 1 })),
-    approve: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    reject: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    authorize: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
     finalize: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
     finalizeOS: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
     delete: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),

@@ -225,7 +225,7 @@ export const expenseCategories = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     normalizedName: varchar("normalizedName", { length: 255 }),
 
-    appliesTo: mysqlEnum("appliesTo", ["OC", "OS", "ESTOQUE", "TODOS"])
+    appliesTo: mysqlEnum("appliesTo", ["OS", "ESTOQUE", "TODOS"])
       .default("TODOS")
       .notNull(),
 
@@ -248,14 +248,14 @@ export const expenseCategories = mysqlTable(
 export type ExpenseCategory = typeof expenseCategories.$inferSelect;
 export type InsertExpenseCategory = typeof expenseCategories.$inferInsert;
 
-// ─── Orders (OC / OS) ────────────────────────────────────────────────────────
+// ─── Orders (OS apenas) ────────────────────────────────────────────────────────
 export const orders = mysqlTable(
   "orders",
   {
     id: int("id").autoincrement().primaryKey(),
     orderNumber: varchar("orderNumber", { length: 32 }).notNull().unique(),
 
-    type: mysqlEnum("type", ["OC", "OS"]).notNull(),
+    type: mysqlEnum("type", ["OS"]).default("OS").notNull(),
 
     empresa: mysqlEnum("empresa", ["GP", "NP"])
       .default("GP")
@@ -266,10 +266,6 @@ export const orders = mysqlTable(
       "Inativo",
       "Pendente",
       "Concluído",
-      "Aprovada",
-      "Reprovada",
-      "Autorizada",
-      "PendenteAprovacao",
       "Reaberta",
     ])
       .default("Pendente")
@@ -304,19 +300,6 @@ export const orders = mysqlTable(
     kmHorimetroFotoUrl: text("kmHorimetroFotoUrl"),
     evidenciaFotos: text("evidenciaFotos"),
     informeTecnico: text("informeTecnico"),
-
-    orcamentoEmpresa: varchar("orcamentoEmpresa", { length: 255 }),
-    orcamentoCnpj: varchar("orcamentoCnpj", { length: 20 }),
-    orcamentoPagamento: varchar("orcamentoPagamento", { length: 100 }),
-    orcamentoPrazo: varchar("orcamentoPrazo", { length: 100 }),
-    orcamentoBanco: varchar("orcamentoBanco", { length: 100 }),
-    orcamentoAgencia: varchar("orcamentoAgencia", { length: 20 }),
-    orcamentoConta: varchar("orcamentoConta", { length: 30 }),
-    orcamentoTitular: varchar("orcamentoTitular", { length: 255 }),
-
-    ocNumber: varchar("ocNumber", { length: 64 }),
-    ocPdfUrl: text("ocPdfUrl"),
-    rejectionReason: text("rejectionReason"),
 
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -413,22 +396,16 @@ export const orderMaterialRequests = mysqlTable(
 
     requestedById: int("requestedById").notNull(),
     requestedByName: varchar("requestedByName", { length: 255 }),
-
     withdrawnByName: varchar("withdrawnByName", { length: 255 }),
-
-    deliveredById: int("deliveredById"),
-    deliveredByName: varchar("deliveredByName", { length: 255 }),
-
-    requestedAt: timestamp("requestedAt").defaultNow().notNull(),
-    deliveredAt: timestamp("deliveredAt"),
+    withdrawnAt: timestamp("withdrawnAt"),
 
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
   (t) => [
-    index("omr_order_idx").on(t.orderId),
-    index("omr_inventory_idx").on(t.inventoryItemId),
-    index("omr_status_idx").on(t.status),
+    index("order_mat_req_orderId_idx").on(t.orderId),
+    index("order_mat_req_inventoryItemId_idx").on(t.inventoryItemId),
+    index("order_mat_req_status_idx").on(t.status),
   ]
 );
 
@@ -436,7 +413,7 @@ export type OrderMaterialRequest = typeof orderMaterialRequests.$inferSelect;
 export type InsertOrderMaterialRequest =
   typeof orderMaterialRequests.$inferInsert;
 
-// ─── Inventory Items ─────────────────────────────────────────────────────────
+// ─── Inventory Items ──────────────────────────────────────────────────────────
 export const inventoryItems = mysqlTable(
   "inventory_items",
   {
@@ -447,38 +424,40 @@ export const inventoryItems = mysqlTable(
       .notNull(),
 
     name: varchar("name", { length: 255 }).notNull(),
+    description: text("description"),
+    barcode: varchar("barcode", { length: 128 }),
 
     unit: varchar("unit", { length: 32 }).default("un").notNull(),
-
     grupo: varchar("grupo", { length: 128 }),
 
-    barcode: varchar("barcode", { length: 100 }),
+    currentQuantity: decimal("currentQuantity", {
+      precision: 10,
+      scale: 3,
+    })
+      .notNull()
+      .default("0"),
 
-    unitCost: decimal("unitCost", { precision: 12, scale: 2 })
-      .default("0")
-      .notNull(),
+    minQuantity: decimal("minQuantity", { precision: 10, scale: 3 }).default(
+      "0"
+    ),
 
-    description: text("description"),
-
-    currentQuantity: decimal("currentQuantity", { precision: 10, scale: 3 })
-      .default("0")
-      .notNull(),
+    lastUnitCost: decimal("lastUnitCost", { precision: 12, scale: 2 }),
 
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },
   (t) => [
-    index("inventory_items_empresa_idx").on(t.empresa),
-    index("inventory_items_name_idx").on(t.name),
-    index("inventory_items_barcode_idx").on(t.barcode),
-    index("inventory_items_grupo_idx").on(t.grupo),
+    index("inv_items_empresa_idx").on(t.empresa),
+    index("inv_items_name_idx").on(t.name),
+    index("inv_items_barcode_idx").on(t.barcode),
+    index("inv_items_grupo_idx").on(t.grupo),
   ]
 );
 
 export type InventoryItem = typeof inventoryItems.$inferSelect;
 export type InsertInventoryItem = typeof inventoryItems.$inferInsert;
 
-// ─── Inventory Movements ─────────────────────────────────────────────────────
+// ─── Inventory Movements ──────────────────────────────────────────────────────
 export const inventoryMovements = mysqlTable(
   "inventory_movements",
   {
@@ -490,14 +469,14 @@ export const inventoryMovements = mysqlTable(
       .default("GP")
       .notNull(),
 
-    movementType: mysqlEnum("movementType", [
-      "compra",
-      "devolução",
-      "ajuste",
-      "uso em OS",
+    type: mysqlEnum("type", [
+      "entrada",
+      "saída",
+      "ajuste_positivo",
+      "ajuste_negativo",
+      "uso_em_os",
+      "devolução_de_os",
     ]).notNull(),
-
-    direction: mysqlEnum("direction", ["entrada", "saída"]).notNull(),
 
     quantity: decimal("quantity", { precision: 10, scale: 3 }).notNull(),
 
@@ -516,10 +495,6 @@ export const inventoryMovements = mysqlTable(
 
     veiculo: varchar("veiculo", { length: 60 }),
 
-    ocOrderId: int("ocOrderId"),
-    ocOrderNumber: varchar("ocOrderNumber", { length: 32 }),
-    ocNumber: varchar("ocNumber", { length: 64 }),
-
     osOrderId: int("osOrderId"),
     osOrderNumber: varchar("osOrderNumber", { length: 32 }),
 
@@ -533,7 +508,6 @@ export const inventoryMovements = mysqlTable(
   (t) => [
     index("inv_mov_itemId_idx").on(t.inventoryItemId),
     index("inv_mov_empresa_idx").on(t.empresa),
-    index("inv_mov_ocOrderId_idx").on(t.ocOrderId),
     index("inv_mov_osOrderId_idx").on(t.osOrderId),
     index("inv_mov_grupo_idx").on(t.grupo),
     index("inv_mov_expenseGroupId_idx").on(t.expenseGroupId),
@@ -859,14 +833,6 @@ export const userCompanyPermissions = mysqlTable(
       .default("yes")
       .notNull(),
 
-    canApproveOc: mysqlEnum("canApproveOc", ["yes", "no"])
-      .default("no")
-      .notNull(),
-
-    canAuthorizeOc: mysqlEnum("canAuthorizeOc", ["yes", "no"])
-      .default("no")
-      .notNull(),
-
     canManageUsers: mysqlEnum("canManageUsers", ["yes", "no"])
       .default("no")
       .notNull(),
@@ -889,52 +855,3 @@ export type UserCompanyPermission =
 
 export type InsertUserCompanyPermission =
   typeof userCompanyPermissions.$inferInsert;
-
-// ─── Purchase Approval Rules ────────────────────────────────────────────────
-export const purchaseApprovalRules = mysqlTable(
-  "purchase_approval_rules",
-  {
-    id: int("id").autoincrement().primaryKey(),
-
-    userId: int("userId").notNull(),
-
-    empresa: mysqlEnum("empresa", ["GP", "NP"]).notNull(),
-
-    roleName: varchar("roleName", { length: 100 }),
-
-    canApprove: mysqlEnum("canApprove", ["yes", "no"])
-      .default("no")
-      .notNull(),
-
-    canAuthorize: mysqlEnum("canAuthorize", ["yes", "no"])
-      .default("no")
-      .notNull(),
-
-    maxApprovalValue: decimal("maxApprovalValue", {
-      precision: 14,
-      scale: 2,
-    }),
-
-    requiresSecondApproval: mysqlEnum("requiresSecondApproval", ["yes", "no"])
-      .default("no")
-      .notNull(),
-
-    status: mysqlEnum("status", ["Ativo", "Inativo"])
-      .default("Ativo")
-      .notNull(),
-
-    createdAt: timestamp("createdAt").defaultNow().notNull(),
-    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  },
-  (t) => [
-    index("purchase_approval_rules_user_idx").on(t.userId),
-    index("purchase_approval_rules_empresa_idx").on(t.empresa),
-    index("purchase_approval_rules_status_idx").on(t.status),
-  ]
-);
-
-export type PurchaseApprovalRule =
-  typeof purchaseApprovalRules.$inferSelect;
-
-export type InsertPurchaseApprovalRule =
-  typeof purchaseApprovalRules.$inferInsert;

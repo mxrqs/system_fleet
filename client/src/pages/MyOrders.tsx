@@ -18,7 +18,6 @@ import {
   FileSpreadsheet,
   FilePlus2,
   Wrench,
-  ShoppingCart,
   AlertTriangle,
 } from "lucide-react";
 import { useState, useMemo } from "react";
@@ -29,18 +28,10 @@ type StatusFilter =
   | "Ativo"
   | "Inativo"
   | "Pendente"
-  | "Concluído"
-  | "Aprovada"
-  | "Reprovada"
-  | "Autorizada"
-  | "PendenteAprovacao"
-  | "Reaberta";
+  | "Concluído";
 
 export default function MyOrdersPage() {
   const [, navigate] = useLocation();
-
-  // Tab: "OS" | "OC"
-  const [activeTab, setActiveTab] = useState<"OS" | "OC">("OS");
 
   // Filters
   const [statusFilters, setStatusFilters] = useState<Set<StatusFilter>>(
@@ -54,10 +45,11 @@ export default function MyOrdersPage() {
     onlyActive: false,
   });
 
-  // Fetch all orders (OS: all visible; OC: all visible)
+  // Fetch all orders (OS: all visible)
   const { data: allOrders, isLoading } = trpc.orders.list.useQuery({
     onlyMine: true,
     hasPendingAlert: alertsOnly || undefined,
+    type: "OS",
   });
 
   const toggleStatus = (s: StatusFilter) => {
@@ -69,19 +61,9 @@ export default function MyOrdersPage() {
     });
   };
 
-  // Split into OS and OC
-  const osOrders = useMemo(
-    () => (allOrders ?? []).filter(o => o.type === "OS"),
-    [allOrders]
-  );
-  const ocOrders = useMemo(
-    () => (allOrders ?? []).filter(o => o.type === "OC"),
-    [allOrders]
-  );
-
-  // Apply filters to active tab
+  // Apply filters
   const activeOrders = useMemo(() => {
-    let list = activeTab === "OS" ? osOrders : ocOrders;
+    let list = (allOrders ?? []).filter(o => o.type === "OS");
 
     // Status filter (checkboxes — if none selected, show all)
     if (statusFilters.size > 0) {
@@ -100,9 +82,7 @@ export default function MyOrdersPage() {
 
     return list;
   }, [
-    activeTab,
-    osOrders,
-    ocOrders,
+    allOrders,
     statusFilters,
     categoryFilter,
     contratoFilter,
@@ -111,14 +91,14 @@ export default function MyOrdersPage() {
   const handleExportCSV = () => {
     if (!activeOrders.length)
       return toast.error("Nenhuma ordem para exportar.");
-    exportToCSV(activeOrders, `minhas-ordens-${activeTab}-${Date.now()}`);
+    exportToCSV(activeOrders, `minhas-ordens-servico-${Date.now()}`);
     toast.success("CSV exportado com sucesso!");
   };
 
   const handleExportExcel = () => {
     if (!activeOrders.length)
       return toast.error("Nenhuma ordem para exportar.");
-    exportToExcel(activeOrders, `minhas-ordens-${activeTab}-${Date.now()}`);
+    exportToExcel(activeOrders, `minhas-ordens-servico-${Date.now()}`);
     toast.success("Excel exportado com sucesso!");
   };
 
@@ -127,11 +107,6 @@ export default function MyOrdersPage() {
     "Inativo",
     "Pendente",
     "Concluído",
-    "Aprovada",
-    "Reprovada",
-    "Autorizada",
-    "PendenteAprovacao",
-    "Reaberta",
   ];
 
   return (
@@ -140,19 +115,19 @@ export default function MyOrdersPage() {
       <div className="pb-6 flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-foreground">
-            Solicitações
+            Minhas Solicitações
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Visualize e acompanhe suas Ordens de Serviço e Ordens de Compra
+            Visualize e acompanhe suas Ordens de Serviço (OS)
           </p>
         </div>
         <Button
-          onClick={() => navigate("/new-request")}
+          onClick={() => navigate("/new-os")}
           size="lg"
           className="gap-2 shadow-sm"
         >
           <FilePlus2 className="h-4 w-4" />
-          Nova Solicitação
+          Nova OS
         </Button>
       </div>
 
@@ -256,43 +231,16 @@ export default function MyOrdersPage() {
       {/* ─── Tabs + Export ───────────────────────────────────────────────────── */}
       <div className="flex items-end justify-between gap-4 flex-wrap border-b">
         <div className="flex gap-0">
-          {/* OS Tab */}
-          <button
-            onClick={() => setActiveTab("OS")}
-            className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-colors ${
-              activeTab === "OS"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
+          <div className="flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 border-primary text-primary">
             <Wrench className="h-4 w-4" />
             Ordens de Serviço
             <Badge
-              variant={activeTab === "OS" ? "default" : "secondary"}
+              variant="default"
               className="ml-1 text-xs h-5 min-w-5 flex items-center justify-center rounded-full px-1.5"
             >
-              {osOrders.length}
+              {activeOrders.length}
             </Badge>
-          </button>
-
-          {/* OC Tab */}
-          <button
-            onClick={() => setActiveTab("OC")}
-            className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-colors ${
-              activeTab === "OC"
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <ShoppingCart className="h-4 w-4" />
-            Ordens de Compra
-            <Badge
-              variant={activeTab === "OC" ? "default" : "secondary"}
-              className="ml-1 text-xs h-5 min-w-5 flex items-center justify-center rounded-full px-1.5"
-            >
-              {ocOrders.length}
-            </Badge>
-          </button>
+          </div>
         </div>
 
         {/* Export buttons */}
@@ -332,9 +280,7 @@ export default function MyOrdersPage() {
         <div className="text-center py-12 text-muted-foreground">
           <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-30" />
           <p className="font-medium">
-            Nenhuma{" "}
-            {activeTab === "OS" ? "Ordem de Serviço" : "Ordem de Compra"}{" "}
-            encontrada
+            Nenhuma Ordem de Serviço encontrada
           </p>
           <p className="text-sm mt-1">
             {statusFilters.size > 0 ||
@@ -342,7 +288,7 @@ export default function MyOrdersPage() {
             contratoFilter !== "all" ||
             alertsOnly
               ? "Tente ajustar os filtros acima."
-              : 'Clique em "Nova Solicitação" para criar sua primeira ordem.'}
+              : 'Clique em "Nova OS" para criar sua primeira ordem.'}
           </p>
         </div>
       )}

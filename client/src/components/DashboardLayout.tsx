@@ -310,7 +310,7 @@ function DashboardLayoutContent({
     if (location.startsWith("/maintenance-orders")) return "Manutenção";
     if (location.startsWith("/maintenance-plans"))
       return "Planos de Manutenção";
-    if (location.startsWith("/purchase-orders")) return "Ordens de Compra";
+
     if (location.startsWith("/expense-groups")) return "Grupos de Despesa";
     if (location.startsWith("/inventory")) return "Estoque";
     if (location.startsWith("/material-requests")) return "Requisições";

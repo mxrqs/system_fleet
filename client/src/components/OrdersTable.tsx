@@ -8,16 +8,12 @@ import { useLocation } from "wouter";
 type Order = {
   id: number;
   orderNumber: string;
-  type: "OC" | "OS";
+  type: "OS";
   status:
     | "Ativo"
     | "Inativo"
     | "Pendente"
     | "Concluído"
-    | "Aprovada"
-    | "Reprovada"
-    | "Autorizada"
-    | "PendenteAprovacao"
     | "Reaberta";
   title: string;
   licensePlate: string | null;
@@ -32,15 +28,10 @@ const STATUS_COLORS: Record<string, string> = {
   Inativo: "bg-gray-100 text-gray-600 border-gray-200",
   Pendente: "bg-amber-100 text-amber-700 border-amber-200",
   Concluído: "bg-blue-100 text-blue-700 border-blue-200",
-  Aprovada: "bg-emerald-100 text-emerald-700 border-emerald-200",
-  Reprovada: "bg-red-100 text-red-700 border-red-200",
-  Autorizada: "bg-violet-100 text-violet-700 border-violet-200",
-  PendenteAprovacao: "bg-yellow-100 text-yellow-700 border-yellow-200",
   Reaberta: "bg-cyan-100 text-cyan-700 border-cyan-200",
 };
 
 const TYPE_COLORS: Record<string, string> = {
-  OC: "bg-purple-100 text-purple-700 border-purple-200",
   OS: "bg-cyan-100 text-cyan-700 border-cyan-200",
 };
 
@@ -62,7 +53,6 @@ export function OrdersTable({
       <TableHeader>
         <TableRow className="bg-muted/40 hover:bg-muted/40">
           <TableHead className="font-semibold">Número</TableHead>
-          <TableHead className="font-semibold">Tipo</TableHead>
           <TableHead className="font-semibold">Título</TableHead>
           <TableHead className="font-semibold">Status</TableHead>
           <TableHead className="font-semibold">Placa</TableHead>
@@ -76,7 +66,7 @@ export function OrdersTable({
         {isLoading ? (
           Array.from({ length: 5 }).map((_, i) => (
             <TableRow key={i}>
-              {Array.from({ length: 8 }).map((__, j) => (
+              {Array.from({ length: 7 }).map((__, j) => (
                 <TableCell key={j}>
                   <div className="h-4 bg-muted rounded animate-pulse w-3/4" />
                 </TableCell>
@@ -85,8 +75,8 @@ export function OrdersTable({
           ))
         ) : orders?.length === 0 ? (
           <TableRow>
-            <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
-              Nenhuma ordem encontrada com os filtros aplicados.
+            <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+              Nenhuma OS encontrada com os filtros aplicados.
             </TableCell>
           </TableRow>
         ) : (
@@ -95,12 +85,6 @@ export function OrdersTable({
               <TableCell>
                 <span className="font-mono text-sm font-semibold text-primary">
                   {order.orderNumber}
-                </span>
-              </TableCell>
-
-              <TableCell>
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${TYPE_COLORS[order.type]}`}>
-                  {order.type}
                 </span>
               </TableCell>
 

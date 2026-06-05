@@ -1,15 +1,12 @@
 import { useAuth } from "@/_core/hooks/useAuth";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { trpc } from "@/lib/trpc";
 import {
   AlertTriangle,
   BarChart3,
-  CheckCircle2,
   ClipboardList,
   Package,
-  ShoppingCart,
   TrendingUp,
   Wrench,
 } from "lucide-react";
@@ -71,22 +68,22 @@ export default function Home() {
           Olá, {user?.name?.split(" ")[0] ?? "usuário"} 👋
         </h1>
         <p className="text-muted-foreground mt-1">
-          Aqui está um resumo do sistema de ordens e estoque.
+          Aqui está um resumo do sistema de ordens de serviço e estoque.
         </p>
       </div>
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <StatCard
-          title="Total de Ordens"
-          value={stats?.totalOrders}
+          title="Total de Ordens (OS)"
+          value={stats?.osCount}
           icon={ClipboardList}
           colorClass="bg-gradient-to-br from-[oklch(0.32_0.12_250)] to-[oklch(0.42_0.14_240)]"
-          subtitle="OC + OS cadastradas"
+          subtitle="OS cadastradas"
           onClick={() => setLocation(isAdmin ? "/orders" : "/my-orders")}
         />
         <StatCard
-          title="Ordens Pendentes"
+          title="OS Pendentes"
           value={stats?.pendingOrders}
           icon={TrendingUp}
           colorClass="bg-gradient-to-br from-[oklch(0.68_0.16_65)] to-[oklch(0.78_0.15_75)]"
@@ -109,49 +106,6 @@ export default function Home() {
           subtitle="Manutenções em aberto"
           onClick={() => setLocation("/maintenance")}
         />
-      </div>
-
-      {/* Secondary stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card className="border shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <ShoppingCart className="h-4 w-4 text-primary" />
-              Ordens de Compra (OC)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-10 w-20" />
-            ) : (
-              <div className="flex items-end gap-2">
-                <span className="text-3xl font-bold text-foreground">{stats?.ocCount ?? 0}</span>
-                <span className="text-sm text-muted-foreground mb-1">ordens</span>
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">Total de OC registradas no sistema</p>
-          </CardContent>
-        </Card>
-
-        <Card className="border shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <Wrench className="h-4 w-4 text-primary" />
-              Ordens de Serviço (OS)
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-10 w-20" />
-            ) : (
-              <div className="flex items-end gap-2">
-                <span className="text-3xl font-bold text-foreground">{stats?.osCount ?? 0}</span>
-                <span className="text-sm text-muted-foreground mb-1">ordens</span>
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">Total de OS registradas no sistema</p>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Quick actions */}
