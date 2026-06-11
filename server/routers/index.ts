@@ -1,6 +1,7 @@
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { z } from "zod";
+import { Database } from "../_core/db";
 import { 
   appUsers, 
   contracts, 
@@ -15,13 +16,52 @@ import {
   fleetVehicles,
   maintenancePlans
 } from "../../drizzle/schema";
+import { eq, and, or } from "drizzle-orm";
 
-const t = initTRPC.create({
+// Define context type
+export interface Context {
+  db: Database;
+  user?: {
+    userId: number;
+    username: string;
+    role: "admin" | "user" | "estoquista";
+    empresa: "GP" | "NP";
+  };
+  req?: any;
+}
+
+const t = initTRPC.createContextInnerFunction<Context>().create({
   transformer: superjson,
 });
 
 export const router = t.router;
 export const publicProcedure = t.procedure;
+
+// Protected procedure that requires authentication
+export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
+  if (!ctx.user) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "You must be logged in to access this resource",
+    });
+  }
+  return next({
+    ctx: {
+      user: ctx.user,
+    },
+  });
+});
+
+// Admin-only procedure
+export const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (ctx.user?.role !== "admin") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "You do not have permission to access this resource",
+    });
+  }
+  return next();
+});
 
 // Helper to infer types
 type AppUser = typeof appUsers.$inferSelect;
@@ -37,115 +77,530 @@ type ExpenseCategory = typeof expenseCategories.$inferSelect;
 type FleetVehicle = typeof fleetVehicles.$inferSelect;
 type MaintenancePlan = typeof maintenancePlans.$inferSelect;
 
+// Import auth router
+import { authRouter } from "./auth";
+
 export const appRouter = router({
-  auth: router({
-    me: publicProcedure.query(() => ({ id: 1, name: "Admin", role: "admin" as "admin" | "user" | "estoquista", empresa: "GP" as const })),
-    logout: publicProcedure.mutation(() => ({ success: true })),
-  }),
+  auth: authRouter,
+
   dashboard: router({
-    stats: publicProcedure.query(() => ({ 
-      orders: 0, 
-      inventory: 0, 
-      alerts: 0,
-      totalOsValue: 0,
-      pendingChecklists: 0
-    })),
+    stats: protectedProcedure.query(async ({ ctx }) => {
+      try {
+        const orderCount = await ctx.db.query.orders.findMany({
+          where: eq(orders.createdById, ctx.user!.userId),
+        });
+
+        const inventoryCount = await ctx.db.query.inventoryItems.findMany();
+
+        const alertCount = await ctx.db.query.maintenanceAlerts.findMany({
+          where: eq(maintenanceAlerts.status, "pending"),
+        });
+
+        return {
+          orders: orderCount.length,
+          inventory: inventoryCount.length,
+          alerts: alertCount.length,
+          totalOsValue: 0,
+          pendingChecklists: 0,
+        };
+      } catch (error) {
+        console.error("Dashboard stats error:", error);
+        return {
+          orders: 0,
+          inventory: 0,
+          alerts: 0,
+          totalOsValue: 0,
+          pendingChecklists: 0,
+        };
+      }
+    }),
   }),
-  users: router({
-    list: publicProcedure.query((): AppUser[] => []),
-  }),
-  appUsers: router({
-    login: publicProcedure.input(z.object({
-      username: z.string(),
-      password: z.string(),
-    })).mutation(() => ({ success: true, user: { id: 1, name: "Admin", role: "admin" as const } })),
-    list: publicProcedure.query((): AppUser[] => []),
-    create: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    delete: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
-  }),
+
   contracts: router({
-    list: publicProcedure.input(z.any().optional()).query((): Contract[] => []),
-    create: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    update: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    delete: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
+    list: protectedProcedure
+      .input(z.object({ empresa: z.enum(["GP", "NP"]).optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        try {
+          const where = input?.empresa ? eq(contracts.empresa, input.empresa) : undefined;
+          return await ctx.db.query.contracts.findMany({ where });
+        } catch (error) {
+          console.error("Contracts list error:", error);
+          return [];
+        }
+      }),
+
+    create: protectedProcedure
+      .input(
+        z.object({
+          contractNumber: z.string(),
+          supplier: z.string(),
+          startDate: z.date(),
+          endDate: z.date(),
+          empresa: z.enum(["GP", "NP"]),
+          notes: z.string().optional(),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const result = await ctx.db.insert(contracts).values({
+            contractNumber: input.contractNumber,
+            supplier: input.supplier,
+            startDate: input.startDate,
+            endDate: input.endDate,
+            empresa: input.empresa,
+            notes: input.notes,
+            createdById: ctx.user!.userId,
+            createdByName: ctx.user!.username,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+
+          return { success: true, id: result.insertId };
+        } catch (error) {
+          console.error("Contract creation error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to create contract",
+          });
+        }
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await ctx.db.delete(contracts).where(eq(contracts.id, input.id));
+          return { success: true };
+        } catch (error) {
+          console.error("Contract deletion error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to delete contract",
+          });
+        }
+      }),
   }),
-  suppliers: router({
-    list: publicProcedure.input(z.any().optional()).query((): Supplier[] => []),
-    create: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    update: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    delete: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
-  }),
+
   orders: router({
-    list: publicProcedure.input(z.any().optional()).query((): Order[] => []),
-    create: publicProcedure.input(z.any()).mutation(() => ({ success: true, id: 1 })),
-    finalize: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
-    finalizeOS: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
-    delete: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
-    getById: publicProcedure.input(z.any()).query((): (Order & { items: any[], checklist: any, alerts: any[] }) | null => null),
-    addItem: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    removeItem: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    updateStatus: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    uploadPhoto: publicProcedure.input(z.any()).mutation(() => ({ url: "https://example.com/photo.jpg" })),
+    list: protectedProcedure
+      .input(z.any().optional())
+      .query(async ({ ctx }) => {
+        try {
+          return await ctx.db.query.orders.findMany();
+        } catch (error) {
+          console.error("Orders list error:", error);
+          return [];
+        }
+      }),
+
+    create: protectedProcedure
+      .input(z.any())
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const result = await ctx.db.insert(orders).values({
+            ...input,
+            createdById: ctx.user!.userId,
+            createdByName: ctx.user!.username,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+
+          return { success: true, id: result.insertId };
+        } catch (error) {
+          console.error("Order creation error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to create order",
+          });
+        }
+      }),
+
+    getById: protectedProcedure
+      .input(z.number())
+      .query(async ({ ctx, input }) => {
+        try {
+          const order = await ctx.db.query.orders.findFirst({
+            where: eq(orders.id, input),
+          });
+
+          return order || null;
+        } catch (error) {
+          console.error("Get order error:", error);
+          return null;
+        }
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await ctx.db.delete(orders).where(eq(orders.id, input.id));
+          return { success: true };
+        } catch (error) {
+          console.error("Order deletion error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to delete order",
+          });
+        }
+      }),
   }),
+
   inventory: router({
-    list: publicProcedure.input(z.any().optional()).query((): InventoryItem[] => []),
-    listItems: publicProcedure.query((): InventoryItem[] => []),
-    createItem: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    updateItem: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    deleteItem: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
-    listGroups: publicProcedure.query((): string[] => []),
-    createEntry: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    createExit: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    createMovement: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    getMovements: publicProcedure.input(z.any().optional()).query((): any[] => []),
-    listMovements: publicProcedure.input(z.any().optional()).query((): any[] => []),
-    getItemHistory: publicProcedure.input(z.number()).query((): InventoryMovement[] => []),
-    getByBarcode: publicProcedure.input(z.string()).query((): InventoryItem | null => null),
-    getItemByBarcode: publicProcedure.input(z.any()).query((): InventoryItem | null => null),
+    list: protectedProcedure
+      .input(z.any().optional())
+      .query(async ({ ctx }) => {
+        try {
+          return await ctx.db.query.inventoryItems.findMany();
+        } catch (error) {
+          console.error("Inventory list error:", error);
+          return [];
+        }
+      }),
+
+    createItem: protectedProcedure
+      .input(z.any())
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const result = await ctx.db.insert(inventoryItems).values({
+            ...input,
+            createdById: ctx.user!.userId,
+            createdByName: ctx.user!.username,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+
+          return { success: true, id: result.insertId };
+        } catch (error) {
+          console.error("Inventory item creation error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to create inventory item",
+          });
+        }
+      }),
+
+    deleteItem: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await ctx.db.delete(inventoryItems).where(eq(inventoryItems.id, input.id));
+          return { success: true };
+        } catch (error) {
+          console.error("Inventory item deletion error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to delete inventory item",
+          });
+        }
+      }),
+
+    getByBarcode: publicProcedure
+      .input(z.string())
+      .query(async ({ ctx, input }) => {
+        try {
+          return await ctx.db.query.inventoryItems.findFirst({
+            where: eq(inventoryItems.barcode, input),
+          });
+        } catch (error) {
+          console.error("Get item by barcode error:", error);
+          return null;
+        }
+      }),
   }),
-  materialRequests: router({
-    list: publicProcedure.input(z.any().optional()).query((): any[] => []),
-    create: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    deliver: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    separate: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    cancel: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-  }),
+
   maintenanceAlerts: router({
-    list: publicProcedure.input(z.any().optional()).query((): MaintenanceAlert[] => []),
-    create: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    resolve: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
-    delete: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
+    list: protectedProcedure
+      .input(z.any().optional())
+      .query(async ({ ctx }) => {
+        try {
+          return await ctx.db.query.maintenanceAlerts.findMany();
+        } catch (error) {
+          console.error("Maintenance alerts list error:", error);
+          return [];
+        }
+      }),
+
+    create: protectedProcedure
+      .input(z.any())
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const result = await ctx.db.insert(maintenanceAlerts).values({
+            ...input,
+            createdById: ctx.user!.userId,
+            createdByName: ctx.user!.username,
+            createdAt: new Date(),
+          });
+
+          return { success: true, id: result.insertId };
+        } catch (error) {
+          console.error("Maintenance alert creation error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to create maintenance alert",
+          });
+        }
+      }),
+
+    resolve: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await ctx.db
+            .update(maintenanceAlerts)
+            .set({ status: "resolved", updatedAt: new Date() })
+            .where(eq(maintenanceAlerts.id, input.id));
+
+          return { success: true };
+        } catch (error) {
+          console.error("Maintenance alert resolution error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to resolve maintenance alert",
+          });
+        }
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await ctx.db.delete(maintenanceAlerts).where(eq(maintenanceAlerts.id, input.id));
+          return { success: true };
+        } catch (error) {
+          console.error("Maintenance alert deletion error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to delete maintenance alert",
+          });
+        }
+      }),
   }),
+
   checklists: router({
-    list: publicProcedure.input(z.any().optional()).query((): Checklist[] => []),
-    create: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    getById: publicProcedure.input(z.number()).query((): Checklist | null => null),
-    delete: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
+    list: protectedProcedure
+      .input(z.any().optional())
+      .query(async ({ ctx }) => {
+        try {
+          return await ctx.db.query.checklists.findMany();
+        } catch (error) {
+          console.error("Checklists list error:", error);
+          return [];
+        }
+      }),
+
+    create: protectedProcedure
+      .input(z.any())
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const result = await ctx.db.insert(checklists).values({
+            ...input,
+            createdById: ctx.user!.userId,
+            createdByName: ctx.user!.username,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+
+          return { success: true, id: result.insertId };
+        } catch (error) {
+          console.error("Checklist creation error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to create checklist",
+          });
+        }
+      }),
+
+    getById: protectedProcedure
+      .input(z.number())
+      .query(async ({ ctx, input }) => {
+        try {
+          return await ctx.db.query.checklists.findFirst({
+            where: eq(checklists.id, input),
+          });
+        } catch (error) {
+          console.error("Get checklist error:", error);
+          return null;
+        }
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await ctx.db.delete(checklists).where(eq(checklists.id, input.id));
+          return { success: true };
+        } catch (error) {
+          console.error("Checklist deletion error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to delete checklist",
+          });
+        }
+      }),
   }),
+
   expenseGroups: router({
-    list: publicProcedure.input(z.any().optional()).query((): ExpenseGroup[] => []),
-    create: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    update: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    delete: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
+    list: protectedProcedure
+      .input(z.any().optional())
+      .query(async ({ ctx }) => {
+        try {
+          return await ctx.db.query.expenseGroups.findMany();
+        } catch (error) {
+          console.error("Expense groups list error:", error);
+          return [];
+        }
+      }),
+
+    create: protectedProcedure
+      .input(z.any())
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const result = await ctx.db.insert(expenseGroups).values({
+            ...input,
+            createdById: ctx.user!.userId,
+            createdByName: ctx.user!.username,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+
+          return { success: true, id: result.insertId };
+        } catch (error) {
+          console.error("Expense group creation error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to create expense group",
+          });
+        }
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await ctx.db.delete(expenseGroups).where(eq(expenseGroups.id, input.id));
+          return { success: true };
+        } catch (error) {
+          console.error("Expense group deletion error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to delete expense group",
+          });
+        }
+      }),
   }),
-  expenseCategories: router({
-    list: publicProcedure.input(z.any().optional()).query((): ExpenseCategory[] => []),
-    create: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    update: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    delete: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
-  }),
+
   fleet: router({
-    list: publicProcedure.input(z.any().optional()).query((): FleetVehicle[] => []),
-    create: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    update: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    delete: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
-    getById: publicProcedure.input(z.number()).query((): FleetVehicle | null => null),
+    list: protectedProcedure
+      .input(z.any().optional())
+      .query(async ({ ctx }) => {
+        try {
+          return await ctx.db.query.fleetVehicles.findMany();
+        } catch (error) {
+          console.error("Fleet list error:", error);
+          return [];
+        }
+      }),
+
+    create: protectedProcedure
+      .input(z.any())
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const result = await ctx.db.insert(fleetVehicles).values({
+            ...input,
+            createdById: ctx.user!.userId,
+            createdByName: ctx.user!.username,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+
+          return { success: true, id: result.insertId };
+        } catch (error) {
+          console.error("Fleet vehicle creation error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to create fleet vehicle",
+          });
+        }
+      }),
+
+    getById: protectedProcedure
+      .input(z.number())
+      .query(async ({ ctx, input }) => {
+        try {
+          return await ctx.db.query.fleetVehicles.findFirst({
+            where: eq(fleetVehicles.id, input),
+          });
+        } catch (error) {
+          console.error("Get fleet vehicle error:", error);
+          return null;
+        }
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await ctx.db.delete(fleetVehicles).where(eq(fleetVehicles.id, input.id));
+          return { success: true };
+        } catch (error) {
+          console.error("Fleet vehicle deletion error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to delete fleet vehicle",
+          });
+        }
+      }),
   }),
+
   maintenancePlans: router({
-    list: publicProcedure.input(z.any().optional()).query((): MaintenancePlan[] => []),
-    create: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    update: publicProcedure.input(z.any()).mutation(() => ({ success: true })),
-    delete: publicProcedure.input(z.object({ id: z.number() })).mutation(() => ({ success: true })),
+    list: protectedProcedure
+      .input(z.any().optional())
+      .query(async ({ ctx }) => {
+        try {
+          return await ctx.db.query.maintenancePlans.findMany();
+        } catch (error) {
+          console.error("Maintenance plans list error:", error);
+          return [];
+        }
+      }),
+
+    create: protectedProcedure
+      .input(z.any())
+      .mutation(async ({ ctx, input }) => {
+        try {
+          const result = await ctx.db.insert(maintenancePlans).values({
+            ...input,
+            createdById: ctx.user!.userId,
+            createdByName: ctx.user!.username,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          });
+
+          return { success: true, id: result.insertId };
+        } catch (error) {
+          console.error("Maintenance plan creation error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to create maintenance plan",
+          });
+        }
+      }),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        try {
+          await ctx.db.delete(maintenancePlans).where(eq(maintenancePlans.id, input.id));
+          return { success: true };
+        } catch (error) {
+          console.error("Maintenance plan deletion error:", error);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Failed to delete maintenance plan",
+          });
+        }
+      }),
   }),
 });
 
